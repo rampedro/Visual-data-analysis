@@ -4,7 +4,7 @@ import { ColumnMetadata, DataRow, Dataset } from '../types';
 export const parseCSV = (file: File): Promise<Dataset> => {
   return new Promise((resolve, reject) => {
     Papa.parse(file, {
-      header: true,
+      header: false, // We will handle headers manually to find the best candidate
       skipEmptyLines: 'greedy',
       dynamicTyping: true,
       complete: (results) => {
@@ -12,22 +12,59 @@ export const parseCSV = (file: File): Promise<Dataset> => {
           console.warn("CSV Errors:", results.errors);
         }
         
-        const rawRows = results.data as any[];
-        // Add artificial ID if not present
-        const rows: DataRow[] = rawRows.map((r, i) => ({ ...r, id: r.id || i }));
-        
-        // Analyze Columns
-        if (rows.length === 0) {
-            resolve({ name: file.name, rows: [], columns: [] });
+        const rawData = results.data as any[][];
+        if (rawData.length === 0) {
+            resolve({ 
+                name: file.name, 
+                rows: [], 
+                columns: [], 
+                stats: { originalRows: 0, totalCells: 0, imputedCells: 0, droppedRows: 0 } 
+            });
             return;
         }
 
+        // Heuristic: Find the first row that has the most non-empty string values, assuming it's the header
+        let bestHeaderIndex = 0;
+        let maxCols = 0;
+
+        // Check first 10 rows
+        for(let i=0; i<Math.min(10, rawData.length); i++) {
+            const row = rawData[i];
+            const nonNullCount = row.filter(c => c !== null && c !== '' && typeof c === 'string').length;
+            if(nonNullCount > maxCols) {
+                maxCols = nonNullCount;
+                bestHeaderIndex = i;
+            }
+        }
+
+        const headerRow = rawData[bestHeaderIndex].map(String);
+        // Ensure unique headers
+        const uniqueHeaders = headerRow.map((h, i) => {
+            const count = headerRow.slice(0, i).filter(x => x === h).length;
+            return count === 0 ? h : `${h}_${count + 1}`;
+        });
+
+        // Create rows objects
+        const rows: DataRow[] = rawData.slice(bestHeaderIndex + 1).map((rowArray, i) => {
+            const rowObj: any = { id: i };
+            uniqueHeaders.forEach((header, index) => {
+                rowObj[header] = rowArray[index];
+            });
+            return rowObj;
+        });
+        
         const columns = analyzeColumns(rows);
 
         resolve({
             name: file.name,
             rows,
-            columns
+            columns,
+            stats: {
+                originalRows: rows.length,
+                totalCells: rows.length * columns.length,
+                imputedCells: 0,
+                droppedRows: bestHeaderIndex // Track skipped rows as dropped
+            }
         });
       },
       error: (err) => reject(err)
@@ -38,7 +75,9 @@ export const parseCSV = (file: File): Promise<Dataset> => {
 export const analyzeColumns = (rows: DataRow[]): ColumnMetadata[] => {
     if (rows.length === 0) return [];
     
+    // Get all keys from the first valid row, excluding internal id
     const keys = Object.keys(rows[0]).filter(k => k !== 'id');
+
     return keys.map(key => {
         const values = rows.map(r => r[key]);
         const nonNull = values.filter(v => v !== null && v !== undefined && v !== '');
@@ -119,7 +158,8 @@ export const transposeDataset = (dataset: Dataset): Dataset => {
     return {
         ...dataset,
         rows: newRows,
-        columns: newColumns
+        columns: newColumns,
+        stats: { ...dataset.stats, totalCells: newRows.length * newColumns.length } // Reset detailed stats on transpose
     };
 };
 
@@ -147,14 +187,19 @@ export const setHeaderRow = (dataset: Dataset, rowIndex: number): Dataset => {
     return {
         ...dataset,
         rows: newRows,
-        columns: analyzeColumns(newRows)
+        columns: analyzeColumns(newRows),
+        stats: {
+            ...dataset.stats,
+            droppedRows: dataset.stats.droppedRows + (rowIndex + 1)
+        }
     };
 };
 
-// New: For "matrix from unstructured csv with wrong colum and rows"
 export const cropDataset = (dataset: Dataset, startRow: number, endRow: number, columnsToKeep?: string[]): Dataset => {
+    const originalLen = dataset.rows.length;
     let newRows = dataset.rows.slice(startRow, endRow + 1);
-    
+    const droppedCount = originalLen - newRows.length;
+
     if (columnsToKeep && columnsToKeep.length > 0) {
         newRows = newRows.map(row => {
             const pruned: any = { id: row.id };
@@ -173,11 +218,14 @@ export const cropDataset = (dataset: Dataset, startRow: number, endRow: number, 
     return {
         ...dataset,
         rows: newRows,
-        columns: analyzeColumns(newRows)
+        columns: analyzeColumns(newRows),
+        stats: {
+            ...dataset.stats,
+            droppedRows: dataset.stats.droppedRows + droppedCount
+        }
     };
 };
 
-// New: Calculate Correlation Matrix
 export const calculateCorrelationMatrix = (dataset: Dataset): { cols: string[], matrix: number[][] } => {
     const numericCols = dataset.columns.filter(c => c.type === 'number' && c.isActive).map(c => c.name);
     if (numericCols.length < 2) return { cols: [], matrix: [] };
@@ -213,40 +261,43 @@ export const calculateCorrelationMatrix = (dataset: Dataset): { cols: string[], 
     return { cols: numericCols, matrix };
 };
 
-// New: Formula Evaluator for "linear combination and none linearn combiantion"
 export const createCalculatedColumn = (dataset: Dataset, newColName: string, formula: string): Dataset => {
-    // Basic safety check: only allow column names and Math functions
-    // We will simple replace column names in the string with `row['colName']` and eval
+    // 1. Identify all variables used in the formula to create argument list
+    const usedColumns = dataset.columns.map(c => c.name).filter(name => formula.includes(name));
     
+    // 2. Create the function body. 
+    // We construct a Function that takes values as arguments.
+    // Example: new Function('Price', 'Tax', 'return Price * Tax')
+    
+    let func: Function;
+    try {
+       // Add Math to scope implicitly by using 'with(Math) { return ... }' or just rely on user typing Math.abs
+       // Safer: explicitly destructure Math if needed, but for now assuming user writes standard JS math.
+       func = new Function(...usedColumns, `return ${formula};`);
+    } catch (e) {
+       console.error("Formula Parse Error", e);
+       throw new Error("Invalid formula syntax");
+    }
+
     const newRows = dataset.rows.map(row => {
-        let evalStr = formula;
-        dataset.columns.forEach(col => {
-            // Replace column names with values. Sort by length to avoid partial replacement issues (e.g. "Tax" inside "TaxRate")
-            // A robust parser is better, but this is a simple "flexible" implementation as requested.
-            // Using a specific pattern like [ColName] is safer for user input.
-        });
-
-        // Simpler approach: Create a function with keys as args
         try {
-           const keys = Object.keys(row).filter(k => k !== 'id');
-           const values = keys.map(k => Number(row[k]) || 0); // Force numeric for math
+           // Extract values in the same order as usedColumns
+           const args = usedColumns.map(colName => {
+               const val = parseFloat(row[colName]);
+               return isNaN(val) ? 0 : val;
+           });
            
-           // Allow common math functions
-           const mathKeys = Object.getOwnPropertyNames(Math);
-           const mathVals = mathKeys.map(k => (Math as any)[k]);
-
-           const func = new Function(...keys, ...mathKeys, `return ${formula};`);
-           const result = func(...values, ...mathVals);
-           
-           return { ...row, [newColName]: result };
+           const result = func(...args);
+           return { ...row, [newColName]: isNaN(result) ? 0 : result };
         } catch (e) {
-           return { ...row, [newColName]: null };
+           return { ...row, [newColName]: 0 };
         }
     });
 
     return {
         ...dataset,
         rows: newRows,
-        columns: analyzeColumns(newRows)
+        columns: analyzeColumns(newRows),
+        stats: dataset.stats
     };
 };

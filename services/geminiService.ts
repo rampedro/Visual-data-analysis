@@ -1,5 +1,5 @@
 import { GoogleGenAI, SchemaType, Type } from "@google/genai";
-import { ColumnMetadata, ProcessingSuggestion } from "../types";
+import { ColumnMetadata, ProcessingSuggestion, VizSuggestion } from "../types";
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
@@ -70,26 +70,92 @@ export const getExplainableInsight = async (
   }
 };
 
-export const runFreeformAnalysis = async (
-  query: string,
-  columns: ColumnMetadata[],
-  sampleData: any[]
-): Promise<string> => {
-  try {
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: `
-        User Query: "${query}"
-        Dataset Schema: ${JSON.stringify(columns.map(c => c.name))}
-        Sample Data: ${JSON.stringify(sampleData.slice(0, 5))}
+export const enrichDatasetMetadata = async (
+    columns: string[],
+    sampleData: any[]
+): Promise<Record<string, { humanLabel: string, missingCause?: string }>> => {
+    const prompt = `
+      For the following columns and sample data, infer:
+      1. A Human Readable Label (e.g. 'cust_id' -> 'Customer ID')
+      2. If data is missing or sparse in the sample, hypothesize WHY (e.g. 'Optional field', 'System generated', 'Data entry error').
+      
+      Columns: ${JSON.stringify(columns)}
+      Sample: ${JSON.stringify(sampleData)}
+    `;
+
+    try {
+        const response = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: prompt,
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                    type: Type.OBJECT,
+                    properties: {
+                        metadata: {
+                            type: Type.ARRAY,
+                            items: {
+                                type: Type.OBJECT,
+                                properties: {
+                                    column: { type: Type.STRING },
+                                    humanLabel: { type: Type.STRING },
+                                    missingCause: { type: Type.STRING }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
         
-        Answer the user's question based on the schema and sample. 
-        If it requires calculation I cannot do, explain how they might do it or what trends are visible in the sample.
-      `
-    });
-    return response.text || "No response generated.";
-  } catch (e) {
-    console.error(e);
-    return "Error running analysis.";
-  }
-};
+        const result = JSON.parse(response.text || "{}");
+        const map: Record<string, any> = {};
+        if (result.metadata) {
+            result.metadata.forEach((m: any) => {
+                map[m.column] = { humanLabel: m.humanLabel, missingCause: m.missingCause };
+            });
+        }
+        return map;
+    } catch (e) {
+        console.error("Metadata enrichment failed", e);
+        return {};
+    }
+}
+
+export const getVisualizationSuggestions = async (
+    columns: ColumnMetadata[],
+    sampleData: any[]
+): Promise<VizSuggestion[]> => {
+    const prompt = `
+      Suggest 3 interesting, distinct interactive visualizations for this data.
+      Columns: ${JSON.stringify(columns.map(c => ({ name: c.name, type: c.type })))}
+      Sample: ${JSON.stringify(sampleData.slice(0, 3))}
+    `;
+
+    try {
+        const response = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: prompt,
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                    type: Type.ARRAY,
+                    items: {
+                        type: Type.OBJECT,
+                        properties: {
+                            title: { type: Type.STRING },
+                            reason: { type: Type.STRING },
+                            type: { type: Type.STRING, enum: ['bar', 'scatter', 'map'] },
+                            x: { type: Type.STRING },
+                            y: { type: Type.STRING },
+                            z: { type: Type.STRING }
+                        }
+                    }
+                }
+            }
+        });
+        return JSON.parse(response.text || "[]");
+    } catch (e) {
+        return [];
+    }
+}

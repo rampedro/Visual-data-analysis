@@ -6,6 +6,9 @@ export interface DataRow {
 export interface ColumnMetadata {
   name: string;
   originalName?: string; // To track renames
+  humanLabel?: string; // AI generated readable name
+  description?: string; // AI generated description
+  missingCause?: string; // AI hypothesis on why it is missing
   type: 'string' | 'number' | 'boolean' | 'date' | 'unknown';
   missingCount: number;
   uniqueCount: number;
@@ -17,10 +20,18 @@ export interface ColumnMetadata {
   categories?: string[];
 }
 
+export interface DatasetStats {
+  originalRows: number;
+  totalCells: number;
+  imputedCells: number;
+  droppedRows: number;
+}
+
 export interface Dataset {
   name: string;
   rows: DataRow[];
   columns: ColumnMetadata[];
+  stats: DatasetStats;
   rawContent?: string;
 }
 
@@ -37,4 +48,13 @@ export interface ProcessingSuggestion {
   suggestion: string;
   reason: string;
   actionType: 'impute' | 'normalize' | 'drop' | 'convert_type' | 'extract';
+}
+
+export interface VizSuggestion {
+  title: string;
+  reason: string;
+  type: 'bar' | 'scatter' | 'map';
+  x: string;
+  y: string;
+  z?: string; // size or color
 }

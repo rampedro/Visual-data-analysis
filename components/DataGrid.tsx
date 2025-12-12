@@ -1,7 +1,8 @@
 import React, { useState, useMemo } from 'react';
-import { Dataset, DataRow, ColumnMetadata } from '../types';
-import { Search, ChevronLeft, ChevronRight, Edit2, RotateCw, ArrowDownToLine, EyeOff, LayoutList, Table as TableIcon, Crop } from 'lucide-react';
+import { Dataset } from '../types';
+import { Search, ChevronLeft, ChevronRight, Edit2, RotateCw, ArrowDownToLine, EyeOff, LayoutList, Table as TableIcon, Crop, Sparkles, HelpCircle } from 'lucide-react';
 import { transposeDataset, setHeaderRow, cropDataset } from '../utils/dataProcessing';
+import { enrichDatasetMetadata } from '../services/geminiService';
 
 interface DataGridProps {
   dataset: Dataset;
@@ -15,6 +16,7 @@ const DataGrid: React.FC<DataGridProps> = ({ dataset, onUpdateDataset }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [viewMode, setViewMode] = useState<'table' | 'tree'>('table');
   const [editingCol, setEditingCol] = useState<string | null>(null);
+  const [enriching, setEnriching] = useState(false);
   
   // Crop State
   const [showCropTools, setShowCropTools] = useState(false);
@@ -42,7 +44,6 @@ const DataGrid: React.FC<DataGridProps> = ({ dataset, onUpdateDataset }) => {
     }
     const newCols = dataset.columns.map(c => c.name === oldName ? { ...c, name: newName } : c);
     
-    // Update rows to match new key
     const newRows = dataset.rows.map(r => {
         const newR = { ...r };
         newR[newName] = newR[oldName];
@@ -70,9 +71,7 @@ const DataGrid: React.FC<DataGridProps> = ({ dataset, onUpdateDataset }) => {
   };
 
   const handleTranspose = () => {
-    if (dataset.rows.length > 500) {
-        if (!window.confirm("Transposing large datasets may be slow. Continue?")) return;
-    }
+    if (dataset.rows.length > 500 && !window.confirm("Transposing large datasets may be slow. Continue?")) return;
     onUpdateDataset(transposeDataset(dataset));
     setPage(0);
   };
@@ -84,6 +83,28 @@ const DataGrid: React.FC<DataGridProps> = ({ dataset, onUpdateDataset }) => {
       setPage(0);
   };
 
+  const handleEnrichMetadata = async () => {
+      setEnriching(true);
+      const enriched = await enrichDatasetMetadata(
+          dataset.columns.map(c => c.name),
+          dataset.rows.slice(0, 5)
+      );
+      
+      const newCols = dataset.columns.map(c => {
+          if (enriched[c.name]) {
+              return { 
+                  ...c, 
+                  humanLabel: enriched[c.name].humanLabel,
+                  missingCause: enriched[c.name].missingCause
+              };
+          }
+          return c;
+      });
+      
+      onUpdateDataset({ ...dataset, columns: newCols });
+      setEnriching(false);
+  };
+
   // Renderers
   const renderTreeView = () => (
     <div className="p-4 space-y-4">
@@ -93,7 +114,9 @@ const DataGrid: React.FC<DataGridProps> = ({ dataset, onUpdateDataset }) => {
                 <div className="pl-4 border-l border-slate-700 space-y-1">
                     {activeColumns.map(col => (
                         <div key={col.name} className="flex gap-2">
-                            <span className="text-slate-500 w-32 shrink-0 truncate text-right">{col.name}:</span>
+                            <span className="text-slate-500 w-32 shrink-0 truncate text-right" title={col.humanLabel || col.name}>
+                                {col.humanLabel || col.name}:
+                            </span>
                             <span className="text-slate-200 break-all">{String(row[col.name])}</span>
                         </div>
                     ))}
@@ -111,35 +134,20 @@ const DataGrid: React.FC<DataGridProps> = ({ dataset, onUpdateDataset }) => {
             <div className="flex items-center gap-4">
                 <h3 className="font-semibold text-slate-200">Data Editor</h3>
                 <div className="flex bg-slate-800 rounded-lg p-1">
-                    <button 
-                        onClick={() => setViewMode('table')}
-                        className={`p-1.5 rounded ${viewMode === 'table' ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-slate-200'}`}
-                        title="Table View"
-                    >
-                        <TableIcon size={16} />
-                    </button>
-                    <button 
-                        onClick={() => setViewMode('tree')}
-                        className={`p-1.5 rounded ${viewMode === 'tree' ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-slate-200'}`}
-                        title="Hierarchical/Tree View"
-                    >
-                        <LayoutList size={16} />
-                    </button>
+                    <button onClick={() => setViewMode('table')} className={`p-1.5 rounded ${viewMode === 'table' ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-slate-200'}`} title="Table View"><TableIcon size={16} /></button>
+                    <button onClick={() => setViewMode('tree')} className={`p-1.5 rounded ${viewMode === 'tree' ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-slate-200'}`} title="Hierarchical/Tree View"><LayoutList size={16} /></button>
                 </div>
                 <div className="w-px h-6 bg-slate-700 mx-2"></div>
+                <button onClick={handleTranspose} className="flex items-center gap-2 text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1.5 rounded transition-colors"><RotateCw size={14} /> Transpose</button>
+                <button onClick={() => setShowCropTools(!showCropTools)} className={`flex items-center gap-2 text-xs px-3 py-1.5 rounded transition-colors ${showCropTools ? 'bg-indigo-600 text-white' : 'bg-slate-800 hover:bg-slate-700 text-slate-300'}`}><Crop size={14} /> Refine Scope</button>
                 <button 
-                    onClick={handleTranspose}
-                    className="flex items-center gap-2 text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1.5 rounded transition-colors"
-                    title="Swap Rows and Columns"
+                    onClick={handleEnrichMetadata} 
+                    disabled={enriching}
+                    className="flex items-center gap-2 text-xs bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded transition-colors disabled:opacity-50"
+                    title="Use AI to guess readable names and missingness reasons"
                 >
-                    <RotateCw size={14} /> Transpose
-                </button>
-                 <button 
-                    onClick={() => setShowCropTools(!showCropTools)}
-                    className={`flex items-center gap-2 text-xs px-3 py-1.5 rounded transition-colors ${showCropTools ? 'bg-indigo-600 text-white' : 'bg-slate-800 hover:bg-slate-700 text-slate-300'}`}
-                    title="Select a specific block of data"
-                >
-                    <Crop size={14} /> Refine Scope
+                    <Sparkles size={14} className={enriching ? "animate-pulse" : ""} /> 
+                    {enriching ? "Analyzing..." : "Enrich Metadata"}
                 </button>
             </div>
 
@@ -159,20 +167,10 @@ const DataGrid: React.FC<DataGridProps> = ({ dataset, onUpdateDataset }) => {
         {showCropTools && (
             <div className="bg-slate-800/50 p-3 rounded-lg border border-indigo-500/30 flex items-center gap-4 animate-in slide-in-from-top-2">
                 <span className="text-xs font-semibold text-indigo-400 uppercase">Refine Data Range</span>
-                <div className="flex items-center gap-2">
-                    <label className="text-xs text-slate-400">Start Row:</label>
-                    <input type="number" value={cropStart} onChange={(e) => setCropStart(Number(e.target.value))} className="w-20 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs" />
-                </div>
-                <div className="flex items-center gap-2">
-                    <label className="text-xs text-slate-400">End Row:</label>
-                    <input type="number" value={cropEnd} onChange={(e) => setCropEnd(Number(e.target.value))} className="w-20 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs" />
-                </div>
-                <button onClick={handleCrop} className="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white text-xs rounded shadow">
-                    Apply Crop
-                </button>
-                <span className="text-[10px] text-slate-500 ml-auto">
-                    Use this to isolate data from unstructured files (e.g. remove metadata headers/footers).
-                </span>
+                <input type="number" value={cropStart} onChange={(e) => setCropStart(Number(e.target.value))} className="w-20 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs" />
+                <span className="text-slate-400 text-xs">to</span>
+                <input type="number" value={cropEnd} onChange={(e) => setCropEnd(Number(e.target.value))} className="w-20 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs" />
+                <button onClick={handleCrop} className="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white text-xs rounded shadow">Apply Crop</button>
             </div>
         )}
       </div>
@@ -185,43 +183,39 @@ const DataGrid: React.FC<DataGridProps> = ({ dataset, onUpdateDataset }) => {
                 <th className="p-2 border-b border-slate-800 w-10 text-center text-xs text-slate-600">#</th>
                 {activeColumns.map(col => (
                     <th key={col.name} className="p-4 font-medium text-slate-200 border-b border-slate-800 whitespace-nowrap min-w-[180px] group relative hover:bg-slate-800 transition-colors">
-                        <div className="flex items-center justify-between gap-2">
-                            {editingCol === col.name ? (
-                                <input 
-                                    autoFocus
-                                    className="bg-slate-950 text-white px-1 py-0.5 rounded border border-indigo-500 w-full"
-                                    defaultValue={col.name}
-                                    onBlur={(e) => handleRenameCol(col.name, e.target.value)}
-                                    onKeyDown={(e) => e.key === 'Enter' && handleRenameCol(col.name, e.currentTarget.value)}
-                                />
-                            ) : (
-                                <div className="flex items-center gap-2" onDoubleClick={() => setEditingCol(col.name)}>
-                                    <span className="cursor-text">{col.name}</span>
-                                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full uppercase ${
-                                        col.type === 'number' ? 'bg-blue-500/20 text-blue-400' :
-                                        col.type === 'date' ? 'bg-green-500/20 text-green-400' :
-                                        'bg-slate-700 text-slate-300'
-                                    }`}>
-                                        {col.type}
-                                    </span>
+                        <div className="flex flex-col gap-1">
+                            <div className="flex items-center justify-between gap-2">
+                                {editingCol === col.name ? (
+                                    <input 
+                                        autoFocus
+                                        className="bg-slate-950 text-white px-1 py-0.5 rounded border border-indigo-500 w-full"
+                                        defaultValue={col.name}
+                                        onBlur={(e) => handleRenameCol(col.name, e.target.value)}
+                                        onKeyDown={(e) => e.key === 'Enter' && handleRenameCol(col.name, e.currentTarget.value)}
+                                    />
+                                ) : (
+                                    <div className="flex items-center gap-2" onDoubleClick={() => setEditingCol(col.name)}>
+                                        <div className="flex flex-col">
+                                            {col.humanLabel && <span className="text-indigo-300 font-bold text-xs">{col.humanLabel}</span>}
+                                            <span className={`cursor-text ${col.humanLabel ? 'text-slate-500 text-[10px]' : ''}`}>{col.name}</span>
+                                        </div>
+                                    </div>
+                                )}
+                                <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <button onClick={() => setEditingCol(col.name)} className="p-1 hover:text-indigo-400" title="Rename"><Edit2 size={12} /></button>
+                                    <button onClick={() => toggleColumnActive(col.name)} className="p-1 hover:text-red-400" title="Hide Column"><EyeOff size={12} /></button>
                                 </div>
-                            )}
-                            
-                            <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
-                                <button 
-                                    onClick={() => setEditingCol(col.name)}
-                                    className="p-1 hover:text-indigo-400"
-                                    title="Rename"
-                                >
-                                    <Edit2 size={12} />
-                                </button>
-                                <button 
-                                    onClick={() => toggleColumnActive(col.name)}
-                                    className="p-1 hover:text-red-400"
-                                    title="Hide Column"
-                                >
-                                    <EyeOff size={12} />
-                                </button>
+                            </div>
+                            <div className="flex gap-2 items-center mt-1">
+                                <span className={`text-[9px] px-1.5 rounded-full uppercase ${col.type === 'number' ? 'bg-blue-500/20 text-blue-400' : 'bg-slate-700 text-slate-300'}`}>{col.type}</span>
+                                {col.missingCause && (
+                                    <div className="group/tooltip relative">
+                                        <HelpCircle size={10} className="text-amber-500 cursor-help" />
+                                        <div className="absolute top-full left-0 mt-1 bg-slate-800 border border-slate-700 p-2 rounded w-40 text-[10px] text-slate-300 z-50 hidden group-hover/tooltip:block shadow-xl">
+                                            AI Note: {col.missingCause}
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         </div>
                     </th>
@@ -233,17 +227,15 @@ const DataGrid: React.FC<DataGridProps> = ({ dataset, onUpdateDataset }) => {
                 <tr key={row.id} className="hover:bg-slate-900 transition-colors group">
                     <td className="p-2 text-center text-xs text-slate-600 relative">
                         <div className="group-hover:hidden">{page * PAGE_SIZE + index + 1}</div>
-                        <button 
-                            onClick={() => handleSetHeader(row.id)}
-                            className="hidden group-hover:block absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-indigo-600 text-white p-1 rounded hover:scale-110"
-                            title="Use as Header Row"
-                        >
-                            <ArrowDownToLine size={12} />
-                        </button>
+                        <button onClick={() => handleSetHeader(row.id)} className="hidden group-hover:block absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-indigo-600 text-white p-1 rounded hover:scale-110" title="Use as Header"><ArrowDownToLine size={12} /></button>
                     </td>
                     {activeColumns.map(col => (
-                    <td key={`${row.id}-${col.name}`} className="p-4 whitespace-nowrap overflow-hidden text-ellipsis max-w-xs border-r border-transparent hover:border-slate-800">
+                    <td key={`${row.id}-${col.name}`} className="p-4 whitespace-nowrap overflow-hidden text-ellipsis max-w-xs border-r border-transparent hover:border-slate-800 relative group/cell">
                         {String(row[col.name] ?? '')}
+                        {/* Cell Tooltip */}
+                        <div className="hidden group-hover/cell:block absolute z-50 bg-slate-800 text-white text-xs px-2 py-1 rounded shadow-lg border border-slate-700 left-4 -top-8 pointer-events-none whitespace-nowrap">
+                            {col.humanLabel || col.name}: {String(row[col.name] ?? 'NULL')}
+                        </div>
                     </td>
                     ))}
                 </tr>
@@ -253,26 +245,11 @@ const DataGrid: React.FC<DataGridProps> = ({ dataset, onUpdateDataset }) => {
         )}
       </div>
 
-      {/* Pagination */}
       <div className="p-4 border-t border-slate-800 flex justify-between items-center bg-slate-900">
-        <span className="text-xs text-slate-500">
-            Showing {page * PAGE_SIZE + 1}-{Math.min((page + 1) * PAGE_SIZE, filteredRows.length)} of {filteredRows.length}
-        </span>
+        <span className="text-xs text-slate-500">Showing {page * PAGE_SIZE + 1}-{Math.min((page + 1) * PAGE_SIZE, filteredRows.length)} of {filteredRows.length}</span>
         <div className="flex gap-2">
-            <button 
-                onClick={() => setPage(p => Math.max(0, p - 1))}
-                disabled={page === 0}
-                className="p-2 hover:bg-slate-800 rounded disabled:opacity-50 disabled:cursor-not-allowed text-slate-400"
-            >
-                <ChevronLeft size={16} />
-            </button>
-            <button 
-                onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
-                disabled={page >= totalPages - 1}
-                className="p-2 hover:bg-slate-800 rounded disabled:opacity-50 disabled:cursor-not-allowed text-slate-400"
-            >
-                <ChevronRight size={16} />
-            </button>
+            <button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0} className="p-2 hover:bg-slate-800 rounded disabled:opacity-50 text-slate-400"><ChevronLeft size={16} /></button>
+            <button onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))} disabled={page >= totalPages - 1} className="p-2 hover:bg-slate-800 rounded disabled:opacity-50 text-slate-400"><ChevronRight size={16} /></button>
         </div>
       </div>
     </div>

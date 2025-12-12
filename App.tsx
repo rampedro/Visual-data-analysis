@@ -13,10 +13,12 @@ import DataIngest from './components/DataIngest';
 import DataGrid from './components/DataGrid';
 import Analytics from './components/Analytics';
 import Visualizer from './components/Visualizer';
+import SensemakingAssistant from './components/SensemakingAssistant';
 
 const App: React.FC = () => {
   const [dataset, setDataset] = useState<Dataset | null>(null);
   const [view, setView] = useState<ViewState>(ViewState.UPLOAD);
+  const [assistantOverride, setAssistantOverride] = useState<string>('');
 
   const handleDataLoaded = (data: Dataset) => {
     setDataset(data);
@@ -108,13 +110,24 @@ const App: React.FC = () => {
           )}
 
           {view === ViewState.ANALYZE && dataset && (
-            <Analytics dataset={dataset} onUpdateDataset={updateDataset} />
+            <Analytics 
+                dataset={dataset} 
+                onUpdateDataset={updateDataset} 
+                setAssistantOverride={setAssistantOverride}
+            />
           )}
 
           {view === ViewState.VISUALIZE && dataset && (
             <Visualizer dataset={dataset} />
           )}
         </div>
+        
+        {/* Sensemaking Loop Persistent Assistant */}
+        <SensemakingAssistant 
+            view={view} 
+            datasetName={dataset?.name} 
+            overrideHint={assistantOverride}
+        />
       </main>
     </div>
   );
