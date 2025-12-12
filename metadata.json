@@ -1,0 +1,7 @@
+{
+  "name": "DataRefine AI",
+  "description": "An intelligent data platform for cleaning, analyzing, and visualizing complex datasets with AI-powered insights and explainable dimensionality reduction.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
