@@ -22,6 +22,10 @@ const App: React.FC = () => {
     setDataset(data);
     setView(ViewState.CLEAN);
   };
+  
+  const updateDataset = (d: Dataset) => {
+      setDataset(d);
+  };
 
   const NavItem = ({ id, icon: Icon, label }: { id: ViewState, icon: any, label: string }) => (
     <button
@@ -100,11 +104,11 @@ const App: React.FC = () => {
           )}
 
           {view === ViewState.CLEAN && dataset && (
-            <DataGrid dataset={dataset} />
+            <DataGrid dataset={dataset} onUpdateDataset={updateDataset} />
           )}
 
           {view === ViewState.ANALYZE && dataset && (
-            <Analytics dataset={dataset} />
+            <Analytics dataset={dataset} onUpdateDataset={updateDataset} />
           )}
 
           {view === ViewState.VISUALIZE && dataset && (

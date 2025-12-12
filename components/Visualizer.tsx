@@ -1,45 +1,68 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { 
   ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
-  BarChart, Bar, LineChart, Line, Cell
+  BarChart, Bar, Cell, ZAxis
 } from 'recharts';
 import { MapContainer, TileLayer, CircleMarker, Popup } from 'react-leaflet';
 import { Dataset } from '../types';
 import { calculatePCA } from '../utils/pca';
 import { getExplainableInsight } from '../services/geminiService';
-import { Lightbulb, Maximize2, Map as MapIcon, BarChart2 } from 'lucide-react';
+import { Lightbulb, Maximize2, Map as MapIcon, BarChart2, Settings, MessageSquare, RefreshCcw } from 'lucide-react';
 
 interface VisualizerProps {
   dataset: Dataset;
 }
 
-// Fix for default Leaflet icon issues in React
-import L from 'leaflet';
-// We are using CircleMarkers so we might not strictly need the default icon, but good to have if we extend.
-
 const Visualizer: React.FC<VisualizerProps> = ({ dataset }) => {
   const [activeTab, setActiveTab] = useState<'distribution' | 'pca' | 'map'>('distribution');
   const [insight, setInsight] = useState<string>('');
   const [loadingInsight, setLoadingInsight] = useState(false);
+  
+  // Custom Axis State
+  const [xAxis, setXAxis] = useState<string>('');
+  const [yAxis, setYAxis] = useState<string>('');
+  const [zAxis, setZAxis] = useState<string>(''); // Size
 
-  // -- PCA Logic --
-  const pcaData = useMemo(() => {
+  // AI Editing State
+  const [schemaDesc, setSchemaDesc] = useState(`Dataset with ${dataset.rows.length} rows and columns: ${dataset.columns.map(c=>c.name).join(', ')}.`);
+  const [isEditingSchema, setIsEditingSchema] = useState(false);
+
+  const numericCols = useMemo(() => dataset.columns.filter(c => c.type === 'number' && c.isActive), [dataset.columns]);
+
+  // Set defaults
+  useEffect(() => {
+      if (numericCols.length > 0) {
+          if(!xAxis) setXAxis(numericCols[0].name);
+          if(!yAxis) setYAxis(numericCols[1]?.name || numericCols[0].name);
+      }
+  }, [numericCols]);
+
+  // -- PCA / Scatter Logic --
+  const plotData = useMemo(() => {
     if (activeTab !== 'pca') return [];
-    // Select numeric columns
-    const numericCols = dataset.columns.filter(c => c.type === 'number').map(c => c.name);
     
-    // Performance optimization: Sample data if dataset is too large for client-side PCA/SVG rendering
-    // This prevents browser freeze on large CSVs
+    // Performance optimization: Sample data
     const MAX_POINTS = 2000;
     let rowsToProcess = dataset.rows;
-    
     if (rowsToProcess.length > MAX_POINTS) {
        const step = Math.ceil(rowsToProcess.length / MAX_POINTS);
        rowsToProcess = rowsToProcess.filter((_, i) => i % step === 0);
     }
 
-    return calculatePCA(rowsToProcess, numericCols);
-  }, [dataset, activeTab]);
+    // If using default PCA
+    if (xAxis === 'PCA1' && yAxis === 'PCA2') {
+         return calculatePCA(rowsToProcess, numericCols.map(c => c.name));
+    }
+
+    // Custom Scatter
+    return rowsToProcess.map(r => ({
+        x: Number(r[xAxis]) || 0,
+        y: Number(r[yAxis]) || 0,
+        z: zAxis ? (Number(r[zAxis]) || 1) : 1,
+        id: r.id,
+        ...r
+    }));
+  }, [dataset, activeTab, xAxis, yAxis, zAxis, numericCols]);
 
   // -- Map Logic --
   const mapData = useMemo(() => {
@@ -66,31 +89,55 @@ const Visualizer: React.FC<VisualizerProps> = ({ dataset }) => {
     let summary = '';
 
     if (activeTab === 'pca') {
-        context = "PCA Scatter Plot of the dataset.";
-        summary = `Plotting ${pcaData.length} points (sampled) reduced to 2 dimensions. x-axis variance: high, y-axis variance: secondary. Clusters indicate similar data points.`;
+        context = `Scatter Plot: ${xAxis} vs ${yAxis}.`;
+        summary = `Analyzing relationship between ${xAxis} and ${yAxis}.`;
     } else if (activeTab === 'map') {
         context = "Geospatial distribution.";
         summary = `Map showing ${mapData.length} points.`;
     } else {
         context = "General Data Distribution";
-        summary = `Dataset has ${dataset.rows.length} rows.`;
     }
 
-    const text = await getExplainableInsight(context, summary);
+    // Send the user-edited schema description as context
+    const text = await getExplainableInsight(context + ` User Context: ${schemaDesc}`, summary);
     setInsight(text);
     setLoadingInsight(false);
   };
 
-  useEffect(() => {
-    setInsight(''); // Reset on tab change
-  }, [activeTab]);
-
-
   // -- Renderers --
+
+  const renderControls = () => {
+      if (activeTab !== 'pca') return null;
+      return (
+          <div className="flex gap-4 mb-4 p-4 bg-slate-900 border border-slate-800 rounded-lg flex-wrap">
+              <div className="flex flex-col gap-1">
+                  <label className="text-xs text-slate-500 font-bold">X Axis</label>
+                  <select value={xAxis} onChange={e => setXAxis(e.target.value)} className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200">
+                      <option value="PCA1">Automatic (PCA 1)</option>
+                      {numericCols.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
+                  </select>
+              </div>
+              <div className="flex flex-col gap-1">
+                  <label className="text-xs text-slate-500 font-bold">Y Axis</label>
+                  <select value={yAxis} onChange={e => setYAxis(e.target.value)} className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200">
+                      <option value="PCA2">Automatic (PCA 2)</option>
+                      {numericCols.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
+                  </select>
+              </div>
+              <div className="flex flex-col gap-1">
+                  <label className="text-xs text-slate-500 font-bold">Size (Z)</label>
+                  <select value={zAxis} onChange={e => setZAxis(e.target.value)} className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200">
+                      <option value="">None</option>
+                      {numericCols.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
+                  </select>
+              </div>
+          </div>
+      );
+  }
 
   const renderDistribution = () => {
     // Pick first numeric column for a simple histogram-like bar chart
-    const numCol = dataset.columns.find(c => c.type === 'number');
+    const numCol = dataset.columns.find(c => c.type === 'number' && c.isActive);
     if (!numCol) return <div className="p-10 text-center text-slate-500">No numeric data to visualize.</div>;
 
     const data = dataset.rows.slice(0, 50).map((r, i) => ({
@@ -117,17 +164,15 @@ const Visualizer: React.FC<VisualizerProps> = ({ dataset }) => {
   };
 
   const renderPCA = () => {
-    if (pcaData.length === 0) return <div className="p-10 text-center text-slate-500">Insufficient numeric data for PCA.</div>;
+    if (plotData.length === 0) return <div className="p-10 text-center text-slate-500">Insufficient numeric data.</div>;
     return (
       <div className="h-full w-full relative">
-         <h4 className="absolute top-0 left-0 text-xs text-slate-500 font-mono bg-slate-900/80 p-1 rounded">
-             PC1 (x) vs PC2 (y) {dataset.rows.length > 2000 ? '(Sampled)' : ''}
-         </h4>
          <ResponsiveContainer width="100%" height="100%">
           <ScatterChart margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-            <XAxis type="number" dataKey="x" name="PC1" stroke="#94a3b8" tick={{fontSize: 12}} />
-            <YAxis type="number" dataKey="y" name="PC2" stroke="#94a3b8" tick={{fontSize: 12}} />
+            <XAxis type="number" dataKey="x" name={xAxis} stroke="#94a3b8" tick={{fontSize: 12}} />
+            <YAxis type="number" dataKey="y" name={yAxis} stroke="#94a3b8" tick={{fontSize: 12}} />
+            {zAxis && <ZAxis type="number" dataKey="z" range={[50, 400]} name={zAxis} />}
             <Tooltip 
                 cursor={{ strokeDasharray: '3 3' }} 
                 content={({ payload }) => {
@@ -136,16 +181,17 @@ const Visualizer: React.FC<VisualizerProps> = ({ dataset }) => {
                         return (
                             <div className="bg-slate-800 border border-slate-700 p-2 rounded shadow-lg text-xs">
                                 <p className="font-bold mb-1">ID: {data.id}</p>
-                                <p>PC1: {data.x.toFixed(2)}</p>
-                                <p>PC2: {data.y.toFixed(2)}</p>
+                                <p>{xAxis}: {data.x.toFixed(2)}</p>
+                                <p>{yAxis}: {data.y.toFixed(2)}</p>
+                                {zAxis && <p>{zAxis}: {data.z}</p>}
                             </div>
                         );
                     }
                     return null;
                 }}
             />
-            <Scatter name="Items" data={pcaData} fill="#8884d8">
-                {pcaData.map((entry, index) => (
+            <Scatter name="Items" data={plotData} fill="#8884d8">
+                {plotData.map((entry, index) => (
                     <Cell key={`cell-${index}`} fill={['#6366f1', '#ec4899', '#8b5cf6', '#14b8a6'][index % 4]} />
                 ))}
             </Scatter>
@@ -209,7 +255,7 @@ const Visualizer: React.FC<VisualizerProps> = ({ dataset }) => {
                     onClick={() => setActiveTab('pca')}
                     className={`px-4 py-2 rounded-md text-sm font-medium transition-colors flex items-center gap-2 ${activeTab === 'pca' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}
                 >
-                    <Maximize2 size={16} /> T-SNE / PCA
+                    <Maximize2 size={16} /> Advanced Scatter
                 </button>
                 <button 
                     onClick={() => setActiveTab('map')}
@@ -218,38 +264,62 @@ const Visualizer: React.FC<VisualizerProps> = ({ dataset }) => {
                     <MapIcon size={16} /> Geospatial
                 </button>
             </div>
-
-            <button 
-                onClick={generateInsight}
-                disabled={loadingInsight}
-                className="flex items-center gap-2 px-3 py-1.5 text-xs bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded hover:bg-emerald-500/20 transition-colors disabled:opacity-50"
-            >
-                <Lightbulb size={14} />
-                {loadingInsight ? 'Analyzing...' : 'Explain this View'}
-            </button>
         </div>
+
+        {renderControls()}
 
         {/* Chart Area */}
-        <div className="flex-1 min-h-0 bg-slate-900 rounded-xl border border-slate-800 p-4 relative overflow-hidden">
-            {activeTab === 'distribution' && renderDistribution()}
-            {activeTab === 'pca' && renderPCA()}
-            {activeTab === 'map' && renderMap()}
-        </div>
-
-        {/* AI Insight Overlay */}
-        {insight && (
-            <div className="bg-slate-800/90 border-l-4 border-emerald-500 p-4 rounded-r shadow-lg animate-in slide-in-from-bottom-2 fade-in">
-                <div className="flex items-start gap-3">
-                    <div className="p-2 bg-emerald-500/20 rounded-full shrink-0">
-                        <Lightbulb size={18} className="text-emerald-400" />
-                    </div>
-                    <div>
-                        <h5 className="font-semibold text-emerald-200 text-sm mb-1">AI Insight</h5>
-                        <p className="text-slate-300 text-sm leading-relaxed">{insight}</p>
-                    </div>
-                </div>
+        <div className="flex-1 min-h-0 bg-slate-900 rounded-xl border border-slate-800 p-4 relative overflow-hidden flex flex-col">
+            <div className="flex-1 relative">
+                {activeTab === 'distribution' && renderDistribution()}
+                {activeTab === 'pca' && renderPCA()}
+                {activeTab === 'map' && renderMap()}
             </div>
-        )}
+            
+            {/* AI Explanation Bar */}
+            <div className="mt-4 pt-4 border-t border-slate-800">
+                <div className="flex items-start gap-4">
+                     <div className="flex-1">
+                        <div className="flex justify-between items-center mb-2">
+                            <label className="text-xs font-semibold text-slate-500 uppercase flex items-center gap-2">
+                                <MessageSquare size={12} /> Data Context for AI
+                            </label>
+                            <button 
+                                onClick={() => setIsEditingSchema(!isEditingSchema)}
+                                className="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1"
+                            >
+                                <Settings size={12} /> {isEditingSchema ? 'Close' : 'Edit Context'}
+                            </button>
+                        </div>
+                        
+                        {isEditingSchema ? (
+                            <textarea 
+                                className="w-full bg-slate-950 border border-slate-700 text-slate-300 text-sm p-2 rounded h-20"
+                                value={schemaDesc}
+                                onChange={(e) => setSchemaDesc(e.target.value)}
+                            />
+                        ) : (
+                            <p className="text-xs text-slate-400 truncate">{schemaDesc}</p>
+                        )}
+                     </div>
+
+                     <button 
+                        onClick={generateInsight}
+                        disabled={loadingInsight}
+                        className="h-full px-6 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg flex items-center gap-2 shadow-lg shadow-indigo-500/20 disabled:opacity-50 transition-all"
+                    >
+                        {loadingInsight ? <RefreshCcw size={18} className="animate-spin" /> : <Lightbulb size={18} />}
+                        <span className="font-medium text-sm">Analyze View</span>
+                    </button>
+                </div>
+                
+                {insight && (
+                    <div className="mt-4 bg-slate-800/50 p-4 rounded-lg border-l-2 border-emerald-500 animate-in slide-in-from-bottom-2">
+                        <p className="text-slate-200 text-sm leading-relaxed">{insight}</p>
+                    </div>
+                )}
+            </div>
+        </div>
     </div>
   );
 };

@@ -5,12 +5,15 @@ export interface DataRow {
 
 export interface ColumnMetadata {
   name: string;
+  originalName?: string; // To track renames
   type: 'string' | 'number' | 'boolean' | 'date' | 'unknown';
   missingCount: number;
   uniqueCount: number;
   min?: number;
   max?: number;
   mean?: number;
+  isActive: boolean; // For filtering analysis
+  importanceScore?: number; // Calculated importance
   categories?: string[];
 }
 
@@ -29,6 +32,7 @@ export enum ViewState {
 }
 
 export interface ProcessingSuggestion {
+  id: string;
   column: string;
   suggestion: string;
   reason: string;
