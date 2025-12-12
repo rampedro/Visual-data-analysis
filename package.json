@@ -16,7 +16,9 @@
     "react": "^19.2.3",
     "react-leaflet": "^5.0.0",
     "leaflet": "^1.9.4",
-    "papaparse": "^5.5.3"
+    "papaparse": "^5.5.3",
+    "@tensorflow/tfjs": "4.17.0",
+    "d3": "7.9.0"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { Dataset } from '../types';
-import { Search, ChevronLeft, ChevronRight, Edit2, RotateCw, ArrowDownToLine, EyeOff, LayoutList, Table as TableIcon, Crop, Sparkles, HelpCircle } from 'lucide-react';
-import { transposeDataset, setHeaderRow, cropDataset } from '../utils/dataProcessing';
+import { Search, ChevronLeft, ChevronRight, Edit2, RotateCw, ArrowDownToLine, EyeOff, LayoutList, Table as TableIcon, Crop, Sparkles, HelpCircle, Hash, Type } from 'lucide-react';
+import { transposeDataset, setHeaderRow, cropDataset, convertColumnType, updateCell } from '../utils/dataProcessing';
 import { enrichDatasetMetadata } from '../services/geminiService';
 
 interface DataGridProps {
@@ -16,6 +16,10 @@ const DataGrid: React.FC<DataGridProps> = ({ dataset, onUpdateDataset }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [viewMode, setViewMode] = useState<'table' | 'tree'>('table');
   const [editingCol, setEditingCol] = useState<string | null>(null);
+  
+  // Cell Editing
+  const [editingCell, setEditingCell] = useState<{id: string | number, col: string} | null>(null);
+
   const [enriching, setEnriching] = useState(false);
   
   // Crop State
@@ -43,7 +47,6 @@ const DataGrid: React.FC<DataGridProps> = ({ dataset, onUpdateDataset }) => {
         return;
     }
     const newCols = dataset.columns.map(c => c.name === oldName ? { ...c, name: newName } : c);
-    
     const newRows = dataset.rows.map(r => {
         const newR = { ...r };
         newR[newName] = newR[oldName];
@@ -54,6 +57,11 @@ const DataGrid: React.FC<DataGridProps> = ({ dataset, onUpdateDataset }) => {
     onUpdateDataset({ ...dataset, columns: newCols, rows: newRows });
     setEditingCol(null);
   };
+
+  const handleUpdateCell = (id: string | number, col: string, val: string) => {
+      onUpdateDataset(updateCell(dataset, id, col, val));
+      setEditingCell(null);
+  }
 
   const toggleColumnActive = (colName: string) => {
     const newCols = dataset.columns.map(c => c.name === colName ? { ...c, isActive: !c.isActive } : c);
@@ -68,6 +76,11 @@ const DataGrid: React.FC<DataGridProps> = ({ dataset, onUpdateDataset }) => {
         onUpdateDataset(newData);
         setPage(0);
     }
+  };
+
+  const handleConvertType = (colName: string, target: 'number' | 'string') => {
+      const newData = convertColumnType(dataset, colName, target);
+      onUpdateDataset(newData);
   };
 
   const handleTranspose = () => {
@@ -163,13 +176,16 @@ const DataGrid: React.FC<DataGridProps> = ({ dataset, onUpdateDataset }) => {
             </div>
         </div>
         
-        {/* Crop Tools */}
+        {/* Crop Tools (Direct Manipulation) */}
         {showCropTools && (
             <div className="bg-slate-800/50 p-3 rounded-lg border border-indigo-500/30 flex items-center gap-4 animate-in slide-in-from-top-2">
                 <span className="text-xs font-semibold text-indigo-400 uppercase">Refine Data Range</span>
-                <input type="number" value={cropStart} onChange={(e) => setCropStart(Number(e.target.value))} className="w-20 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs" />
-                <span className="text-slate-400 text-xs">to</span>
-                <input type="number" value={cropEnd} onChange={(e) => setCropEnd(Number(e.target.value))} className="w-20 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs" />
+                <div className="flex items-center bg-slate-950 rounded border border-slate-700 p-1">
+                    <span className="text-[10px] text-slate-500 px-2">Rows:</span>
+                    <input type="number" value={cropStart} onChange={(e) => setCropStart(Number(e.target.value))} className="w-16 bg-transparent text-white text-xs text-center focus:outline-none" />
+                    <span className="text-slate-400 text-xs px-2">-</span>
+                    <input type="number" value={cropEnd} onChange={(e) => setCropEnd(Number(e.target.value))} className="w-16 bg-transparent text-white text-xs text-center focus:outline-none" />
+                </div>
                 <button onClick={handleCrop} className="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white text-xs rounded shadow">Apply Crop</button>
             </div>
         )}
@@ -201,8 +217,13 @@ const DataGrid: React.FC<DataGridProps> = ({ dataset, onUpdateDataset }) => {
                                         </div>
                                     </div>
                                 )}
-                                <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
+                                <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity gap-1">
                                     <button onClick={() => setEditingCol(col.name)} className="p-1 hover:text-indigo-400" title="Rename"><Edit2 size={12} /></button>
+                                    {col.type === 'number' ? (
+                                        <button onClick={() => handleConvertType(col.name, 'string')} className="p-1 hover:text-indigo-400" title="Convert to String"><Type size={12} /></button>
+                                    ) : (
+                                        <button onClick={() => handleConvertType(col.name, 'number')} className="p-1 hover:text-indigo-400" title="Convert to Number"><Hash size={12} /></button>
+                                    )}
                                     <button onClick={() => toggleColumnActive(col.name)} className="p-1 hover:text-red-400" title="Hide Column"><EyeOff size={12} /></button>
                                 </div>
                             </div>
@@ -230,12 +251,25 @@ const DataGrid: React.FC<DataGridProps> = ({ dataset, onUpdateDataset }) => {
                         <button onClick={() => handleSetHeader(row.id)} className="hidden group-hover:block absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-indigo-600 text-white p-1 rounded hover:scale-110" title="Use as Header"><ArrowDownToLine size={12} /></button>
                     </td>
                     {activeColumns.map(col => (
-                    <td key={`${row.id}-${col.name}`} className="p-4 whitespace-nowrap overflow-hidden text-ellipsis max-w-xs border-r border-transparent hover:border-slate-800 relative group/cell">
-                        {String(row[col.name] ?? '')}
-                        {/* Cell Tooltip */}
-                        <div className="hidden group-hover/cell:block absolute z-50 bg-slate-800 text-white text-xs px-2 py-1 rounded shadow-lg border border-slate-700 left-4 -top-8 pointer-events-none whitespace-nowrap">
-                            {col.humanLabel || col.name}: {String(row[col.name] ?? 'NULL')}
-                        </div>
+                    <td key={`${row.id}-${col.name}`} className="p-4 whitespace-nowrap overflow-hidden text-ellipsis max-w-xs border-r border-transparent hover:border-slate-800 relative group/cell"
+                        onDoubleClick={() => setEditingCell({id: row.id, col: col.name})}
+                    >
+                        {editingCell?.id === row.id && editingCell?.col === col.name ? (
+                            <input 
+                                autoFocus
+                                className="w-full bg-slate-800 text-white px-2 py-1 rounded border border-indigo-500"
+                                defaultValue={String(row[col.name] ?? '')}
+                                onBlur={(e) => handleUpdateCell(row.id, col.name, e.target.value)}
+                                onKeyDown={(e) => e.key === 'Enter' && handleUpdateCell(row.id, col.name, e.currentTarget.value)}
+                            />
+                        ) : (
+                            <>
+                            {String(row[col.name] ?? '')}
+                            <div className="hidden group-hover/cell:block absolute z-50 bg-slate-800 text-white text-xs px-2 py-1 rounded shadow-lg border border-slate-700 left-4 -top-8 pointer-events-none whitespace-nowrap">
+                                {col.humanLabel || col.name}: {String(row[col.name] ?? 'NULL')}
+                            </div>
+                            </>
+                        )}
                     </td>
                     ))}
                 </tr>
