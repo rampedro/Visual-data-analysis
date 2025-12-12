@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { Dataset, DataRow, ColumnMetadata } from '../types';
-import { Search, ChevronLeft, ChevronRight, Edit2, RotateCw, ArrowDownToLine, EyeOff, LayoutList, Table as TableIcon } from 'lucide-react';
-import { transposeDataset, setHeaderRow } from '../utils/dataProcessing';
+import { Search, ChevronLeft, ChevronRight, Edit2, RotateCw, ArrowDownToLine, EyeOff, LayoutList, Table as TableIcon, Crop } from 'lucide-react';
+import { transposeDataset, setHeaderRow, cropDataset } from '../utils/dataProcessing';
 
 interface DataGridProps {
   dataset: Dataset;
@@ -15,6 +15,11 @@ const DataGrid: React.FC<DataGridProps> = ({ dataset, onUpdateDataset }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [viewMode, setViewMode] = useState<'table' | 'tree'>('table');
   const [editingCol, setEditingCol] = useState<string | null>(null);
+  
+  // Crop State
+  const [showCropTools, setShowCropTools] = useState(false);
+  const [cropStart, setCropStart] = useState<number>(0);
+  const [cropEnd, setCropEnd] = useState<number>(dataset.rows.length - 1);
 
   const activeColumns = useMemo(() => dataset.columns.filter(c => c.isActive), [dataset.columns]);
 
@@ -55,7 +60,6 @@ const DataGrid: React.FC<DataGridProps> = ({ dataset, onUpdateDataset }) => {
   };
 
   const handleSetHeader = (rowId: number | string) => {
-    // Find absolute index
     const index = dataset.rows.findIndex(r => r.id === rowId);
     if (index === -1) return;
     if (window.confirm("This will discard all rows above this line and use this row as the header. Continue?")) {
@@ -71,6 +75,13 @@ const DataGrid: React.FC<DataGridProps> = ({ dataset, onUpdateDataset }) => {
     }
     onUpdateDataset(transposeDataset(dataset));
     setPage(0);
+  };
+  
+  const handleCrop = () => {
+      const newData = cropDataset(dataset, cropStart, cropEnd);
+      onUpdateDataset(newData);
+      setShowCropTools(false);
+      setPage(0);
   };
 
   // Renderers
@@ -95,44 +106,75 @@ const DataGrid: React.FC<DataGridProps> = ({ dataset, onUpdateDataset }) => {
   return (
     <div className="flex flex-col h-full bg-slate-950 rounded-xl overflow-hidden shadow-sm border border-slate-800">
       {/* Toolbar */}
-      <div className="p-4 border-b border-slate-800 flex flex-wrap gap-4 justify-between items-center bg-slate-900">
-        <div className="flex items-center gap-4">
-            <h3 className="font-semibold text-slate-200">Data Editor</h3>
-            <div className="flex bg-slate-800 rounded-lg p-1">
+      <div className="p-4 border-b border-slate-800 flex flex-col gap-4 bg-slate-900">
+          <div className="flex flex-wrap gap-4 justify-between items-center">
+            <div className="flex items-center gap-4">
+                <h3 className="font-semibold text-slate-200">Data Editor</h3>
+                <div className="flex bg-slate-800 rounded-lg p-1">
+                    <button 
+                        onClick={() => setViewMode('table')}
+                        className={`p-1.5 rounded ${viewMode === 'table' ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-slate-200'}`}
+                        title="Table View"
+                    >
+                        <TableIcon size={16} />
+                    </button>
+                    <button 
+                        onClick={() => setViewMode('tree')}
+                        className={`p-1.5 rounded ${viewMode === 'tree' ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-slate-200'}`}
+                        title="Hierarchical/Tree View"
+                    >
+                        <LayoutList size={16} />
+                    </button>
+                </div>
+                <div className="w-px h-6 bg-slate-700 mx-2"></div>
                 <button 
-                    onClick={() => setViewMode('table')}
-                    className={`p-1.5 rounded ${viewMode === 'table' ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-slate-200'}`}
-                    title="Table View"
+                    onClick={handleTranspose}
+                    className="flex items-center gap-2 text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1.5 rounded transition-colors"
+                    title="Swap Rows and Columns"
                 >
-                    <TableIcon size={16} />
+                    <RotateCw size={14} /> Transpose
                 </button>
-                <button 
-                    onClick={() => setViewMode('tree')}
-                    className={`p-1.5 rounded ${viewMode === 'tree' ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-slate-200'}`}
-                    title="Hierarchical/Tree View"
+                 <button 
+                    onClick={() => setShowCropTools(!showCropTools)}
+                    className={`flex items-center gap-2 text-xs px-3 py-1.5 rounded transition-colors ${showCropTools ? 'bg-indigo-600 text-white' : 'bg-slate-800 hover:bg-slate-700 text-slate-300'}`}
+                    title="Select a specific block of data"
                 >
-                    <LayoutList size={16} />
+                    <Crop size={14} /> Refine Scope
                 </button>
             </div>
-            <button 
-                onClick={handleTranspose}
-                className="flex items-center gap-2 text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1.5 rounded transition-colors"
-                title="Swap Rows and Columns"
-            >
-                <RotateCw size={14} /> Transpose
-            </button>
-        </div>
 
-        <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-            <input 
-                type="text" 
-                placeholder="Search values..." 
-                className="bg-slate-950 border border-slate-700 text-slate-200 text-sm rounded-full pl-10 pr-4 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 w-64"
-                value={searchTerm}
-                onChange={(e) => { setSearchTerm(e.target.value); setPage(0); }}
-            />
+            <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+                <input 
+                    type="text" 
+                    placeholder="Search values..." 
+                    className="bg-slate-950 border border-slate-700 text-slate-200 text-sm rounded-full pl-10 pr-4 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 w-64"
+                    value={searchTerm}
+                    onChange={(e) => { setSearchTerm(e.target.value); setPage(0); }}
+                />
+            </div>
         </div>
+        
+        {/* Crop Tools */}
+        {showCropTools && (
+            <div className="bg-slate-800/50 p-3 rounded-lg border border-indigo-500/30 flex items-center gap-4 animate-in slide-in-from-top-2">
+                <span className="text-xs font-semibold text-indigo-400 uppercase">Refine Data Range</span>
+                <div className="flex items-center gap-2">
+                    <label className="text-xs text-slate-400">Start Row:</label>
+                    <input type="number" value={cropStart} onChange={(e) => setCropStart(Number(e.target.value))} className="w-20 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs" />
+                </div>
+                <div className="flex items-center gap-2">
+                    <label className="text-xs text-slate-400">End Row:</label>
+                    <input type="number" value={cropEnd} onChange={(e) => setCropEnd(Number(e.target.value))} className="w-20 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs" />
+                </div>
+                <button onClick={handleCrop} className="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white text-xs rounded shadow">
+                    Apply Crop
+                </button>
+                <span className="text-[10px] text-slate-500 ml-auto">
+                    Use this to isolate data from unstructured files (e.g. remove metadata headers/footers).
+                </span>
+            </div>
+        )}
       </div>
 
       <div className="flex-1 overflow-auto bg-slate-950">

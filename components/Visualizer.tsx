@@ -5,9 +5,9 @@ import {
 } from 'recharts';
 import { MapContainer, TileLayer, CircleMarker, Popup } from 'react-leaflet';
 import { Dataset } from '../types';
-import { calculatePCA } from '../utils/pca';
+import { calculatePCA, PCAResult } from '../utils/pca';
 import { getExplainableInsight } from '../services/geminiService';
-import { Lightbulb, Maximize2, Map as MapIcon, BarChart2, Settings, MessageSquare, RefreshCcw } from 'lucide-react';
+import { Lightbulb, Maximize2, Map as MapIcon, BarChart2, Settings, MessageSquare, RefreshCcw, HelpCircle } from 'lucide-react';
 
 interface VisualizerProps {
   dataset: Dataset;
@@ -32,12 +32,27 @@ const Visualizer: React.FC<VisualizerProps> = ({ dataset }) => {
   // Set defaults
   useEffect(() => {
       if (numericCols.length > 0) {
-          if(!xAxis) setXAxis(numericCols[0].name);
-          if(!yAxis) setYAxis(numericCols[1]?.name || numericCols[0].name);
+          if(!xAxis) setXAxis('PCA1');
+          if(!yAxis) setYAxis('PCA2');
       }
   }, [numericCols]);
 
   // -- PCA / Scatter Logic --
+  const pcaResult: PCAResult = useMemo(() => {
+    // Only calculate if PCA mode selected
+    if (activeTab === 'pca' && (xAxis === 'PCA1' || yAxis === 'PCA2' || yAxis === 'PCA1' || xAxis === 'PCA2')) {
+        // Sample data for performance
+        const MAX_POINTS = 2000;
+        let rowsToProcess = dataset.rows;
+        if (rowsToProcess.length > MAX_POINTS) {
+            const step = Math.ceil(rowsToProcess.length / MAX_POINTS);
+            rowsToProcess = rowsToProcess.filter((_, i) => i % step === 0);
+        }
+        return calculatePCA(rowsToProcess, numericCols.map(c => c.name));
+    }
+    return { data: [], loadings: { pc1: [], pc2: [] } };
+  }, [dataset, activeTab, xAxis, yAxis, numericCols]);
+
   const plotData = useMemo(() => {
     if (activeTab !== 'pca') return [];
     
@@ -49,12 +64,12 @@ const Visualizer: React.FC<VisualizerProps> = ({ dataset }) => {
        rowsToProcess = rowsToProcess.filter((_, i) => i % step === 0);
     }
 
-    // If using default PCA
-    if (xAxis === 'PCA1' && yAxis === 'PCA2') {
-         return calculatePCA(rowsToProcess, numericCols.map(c => c.name));
+    // Using PCA result
+    if (pcaResult.data.length > 0 && (xAxis.startsWith('PCA') || yAxis.startsWith('PCA'))) {
+        return pcaResult.data;
     }
 
-    // Custom Scatter
+    // Custom Scatter (Raw Columns)
     return rowsToProcess.map(r => ({
         x: Number(r[xAxis]) || 0,
         y: Number(r[yAxis]) || 0,
@@ -62,7 +77,7 @@ const Visualizer: React.FC<VisualizerProps> = ({ dataset }) => {
         id: r.id,
         ...r
     }));
-  }, [dataset, activeTab, xAxis, yAxis, zAxis, numericCols]);
+  }, [dataset, activeTab, xAxis, yAxis, zAxis, numericCols, pcaResult]);
 
   // -- Map Logic --
   const mapData = useMemo(() => {
@@ -98,7 +113,6 @@ const Visualizer: React.FC<VisualizerProps> = ({ dataset }) => {
         context = "General Data Distribution";
     }
 
-    // Send the user-edited schema description as context
     const text = await getExplainableInsight(context + ` User Context: ${schemaDesc}`, summary);
     setInsight(text);
     setLoadingInsight(false);
@@ -109,17 +123,19 @@ const Visualizer: React.FC<VisualizerProps> = ({ dataset }) => {
   const renderControls = () => {
       if (activeTab !== 'pca') return null;
       return (
-          <div className="flex gap-4 mb-4 p-4 bg-slate-900 border border-slate-800 rounded-lg flex-wrap">
+          <div className="flex gap-4 mb-4 p-4 bg-slate-900 border border-slate-800 rounded-lg flex-wrap items-end">
               <div className="flex flex-col gap-1">
                   <label className="text-xs text-slate-500 font-bold">X Axis</label>
                   <select value={xAxis} onChange={e => setXAxis(e.target.value)} className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200">
                       <option value="PCA1">Automatic (PCA 1)</option>
+                      <option value="PCA2">Automatic (PCA 2)</option>
                       {numericCols.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
                   </select>
               </div>
               <div className="flex flex-col gap-1">
                   <label className="text-xs text-slate-500 font-bold">Y Axis</label>
                   <select value={yAxis} onChange={e => setYAxis(e.target.value)} className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200">
+                      <option value="PCA1">Automatic (PCA 1)</option>
                       <option value="PCA2">Automatic (PCA 2)</option>
                       {numericCols.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
                   </select>
@@ -136,7 +152,6 @@ const Visualizer: React.FC<VisualizerProps> = ({ dataset }) => {
   }
 
   const renderDistribution = () => {
-    // Pick first numeric column for a simple histogram-like bar chart
     const numCol = dataset.columns.find(c => c.type === 'number' && c.isActive);
     if (!numCol) return <div className="p-10 text-center text-slate-500">No numeric data to visualize.</div>;
 
@@ -153,9 +168,7 @@ const Visualizer: React.FC<VisualizerProps> = ({ dataset }) => {
                     <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
                     <XAxis dataKey="name" hide />
                     <YAxis stroke="#94a3b8" />
-                    <Tooltip 
-                        contentStyle={{ backgroundColor: '#1e293b', borderColor: '#334155', color: '#f1f5f9' }}
-                    />
+                    <Tooltip contentStyle={{ backgroundColor: '#1e293b', borderColor: '#334155', color: '#f1f5f9' }} />
                     <Bar dataKey="value" fill="#6366f1" />
                 </BarChart>
             </ResponsiveContainer>
@@ -163,40 +176,66 @@ const Visualizer: React.FC<VisualizerProps> = ({ dataset }) => {
     );
   };
 
+  const renderLoadings = (loadings: { name: string, value: number }[], label: string) => (
+      <div className="bg-slate-800/50 p-2 rounded text-[10px] w-48 shrink-0">
+          <strong className="text-indigo-300 block mb-2">{label} Drivers</strong>
+          <div className="space-y-1 max-h-40 overflow-y-auto">
+              {loadings.slice(0, 5).map(l => (
+                  <div key={l.name} className="flex justify-between">
+                      <span className="truncate w-24" title={l.name}>{l.name}</span>
+                      <span className={l.value > 0 ? "text-green-400" : "text-red-400"}>{l.value.toFixed(2)}</span>
+                  </div>
+              ))}
+          </div>
+      </div>
+  );
+
   const renderPCA = () => {
     if (plotData.length === 0) return <div className="p-10 text-center text-slate-500">Insufficient numeric data.</div>;
     return (
-      <div className="h-full w-full relative">
-         <ResponsiveContainer width="100%" height="100%">
-          <ScatterChart margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-            <XAxis type="number" dataKey="x" name={xAxis} stroke="#94a3b8" tick={{fontSize: 12}} />
-            <YAxis type="number" dataKey="y" name={yAxis} stroke="#94a3b8" tick={{fontSize: 12}} />
-            {zAxis && <ZAxis type="number" dataKey="z" range={[50, 400]} name={zAxis} />}
-            <Tooltip 
-                cursor={{ strokeDasharray: '3 3' }} 
-                content={({ payload }) => {
-                    if (payload && payload.length) {
-                        const data = payload[0].payload;
-                        return (
-                            <div className="bg-slate-800 border border-slate-700 p-2 rounded shadow-lg text-xs">
-                                <p className="font-bold mb-1">ID: {data.id}</p>
-                                <p>{xAxis}: {data.x.toFixed(2)}</p>
-                                <p>{yAxis}: {data.y.toFixed(2)}</p>
-                                {zAxis && <p>{zAxis}: {data.z}</p>}
-                            </div>
-                        );
-                    }
-                    return null;
-                }}
-            />
-            <Scatter name="Items" data={plotData} fill="#8884d8">
-                {plotData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={['#6366f1', '#ec4899', '#8b5cf6', '#14b8a6'][index % 4]} />
-                ))}
-            </Scatter>
-          </ScatterChart>
-        </ResponsiveContainer>
+      <div className="h-full w-full relative flex">
+         <div className="flex-1 h-full">
+            <ResponsiveContainer width="100%" height="100%">
+            <ScatterChart margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                <XAxis type="number" dataKey="x" name={xAxis} stroke="#94a3b8" tick={{fontSize: 12}} />
+                <YAxis type="number" dataKey="y" name={yAxis} stroke="#94a3b8" tick={{fontSize: 12}} />
+                {zAxis && <ZAxis type="number" dataKey="z" range={[50, 400]} name={zAxis} />}
+                <Tooltip 
+                    cursor={{ strokeDasharray: '3 3' }} 
+                    content={({ payload }) => {
+                        if (payload && payload.length) {
+                            const data = payload[0].payload;
+                            return (
+                                <div className="bg-slate-800 border border-slate-700 p-2 rounded shadow-lg text-xs">
+                                    <p className="font-bold mb-1">ID: {data.id}</p>
+                                    <p>{xAxis}: {data.x.toFixed(2)}</p>
+                                    <p>{yAxis}: {data.y.toFixed(2)}</p>
+                                    {zAxis && <p>{zAxis}: {data.z}</p>}
+                                </div>
+                            );
+                        }
+                        return null;
+                    }}
+                />
+                <Scatter name="Items" data={plotData} fill="#8884d8">
+                    {plotData.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={['#6366f1', '#ec4899', '#8b5cf6', '#14b8a6'][index % 4]} />
+                    ))}
+                </Scatter>
+            </ScatterChart>
+            </ResponsiveContainer>
+         </div>
+
+         {/* Loadings Panel (Explainable PCA) */}
+         {(xAxis === 'PCA1' || xAxis === 'PCA2' || yAxis === 'PCA1' || yAxis === 'PCA2') && pcaResult.loadings.pc1.length > 0 && (
+             <div className="absolute top-2 right-2 flex flex-col gap-2">
+                 {xAxis === 'PCA1' && renderLoadings(pcaResult.loadings.pc1, "X-Axis (PC1)")}
+                 {xAxis === 'PCA2' && renderLoadings(pcaResult.loadings.pc2, "X-Axis (PC2)")}
+                 {yAxis === 'PCA1' && renderLoadings(pcaResult.loadings.pc1, "Y-Axis (PC1)")}
+                 {yAxis === 'PCA2' && renderLoadings(pcaResult.loadings.pc2, "Y-Axis (PC2)")}
+             </div>
+         )}
       </div>
     );
   };
@@ -208,8 +247,6 @@ const Visualizer: React.FC<VisualizerProps> = ({ dataset }) => {
             <p>No geospatial coordinates (lat/lon) found in dataset.</p>
         </div>
     );
-
-    // Calculate center
     const latSum = mapData.reduce((s, d) => s + d.lat, 0);
     const lngSum = mapData.reduce((s, d) => s + d.lng, 0);
     const center: [number, number] = [latSum / mapData.length, lngSum / mapData.length];

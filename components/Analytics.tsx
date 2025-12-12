@@ -1,6 +1,7 @@
-import React, { useMemo } from 'react';
-import { Dataset, ColumnMetadata } from '../types';
-import { Hash, Type, AlertCircle, BarChart3, TrendingUp, X, Check, BrainCircuit } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
+import { Dataset } from '../types';
+import { Hash, Type, AlertCircle, BarChart3, TrendingUp, X, Check, BrainCircuit, Calculator, Table2 } from 'lucide-react';
+import { calculateCorrelationMatrix, createCalculatedColumn } from '../utils/dataProcessing';
 
 interface AnalyticsProps {
   dataset: Dataset;
@@ -8,7 +9,12 @@ interface AnalyticsProps {
 }
 
 const Analytics: React.FC<AnalyticsProps> = ({ dataset, onUpdateDataset }) => {
+  const [activeTab, setActiveTab] = useState<'health' | 'features'>('health');
   
+  // Feature Engineering State
+  const [newColName, setNewColName] = useState('');
+  const [formula, setFormula] = useState('');
+
   // Interactive Actions
   const handleDropColumn = (colName: string) => {
     const newCols = dataset.columns.map(c => c.name === colName ? { ...c, isActive: false } : c);
@@ -28,11 +34,23 @@ const Analytics: React.FC<AnalyticsProps> = ({ dataset, onUpdateDataset }) => {
         return r;
     });
     
-    // Recalculate stats for this column would be ideal here, simplified for now
     onUpdateDataset({ ...dataset, rows: newRows });
   };
 
-  // Generate Suggestions
+  const handleCreateFeature = () => {
+      if(!newColName || !formula) return;
+      try {
+          const newData = createCalculatedColumn(dataset, newColName, formula);
+          onUpdateDataset(newData);
+          setNewColName('');
+          setFormula('');
+          alert(`Column ${newColName} created!`);
+      } catch (e) {
+          alert("Error in formula. Use valid Javascript syntax and column names.");
+      }
+  };
+
+  // Memoized Calculations
   const suggestions = useMemo(() => {
     const activeCols = dataset.columns.filter(c => c.isActive);
     const list: { id: string, title: string, desc: string, action: () => void, icon: any }[] = [];
@@ -71,13 +89,17 @@ const Analytics: React.FC<AnalyticsProps> = ({ dataset, onUpdateDataset }) => {
     return list;
   }, [dataset]);
 
+  const correlation = useMemo(() => {
+      if (activeTab === 'features') return calculateCorrelationMatrix(dataset);
+      return { cols: [], matrix: [] };
+  }, [dataset, activeTab]);
+
   const activeCols = dataset.columns.filter(c => c.isActive);
 
-  return (
-    <div className="h-full grid grid-cols-1 lg:grid-cols-3 gap-6 overflow-hidden">
-        
-        {/* Left Col: Overview & Health */}
-        <div className="lg:col-span-2 flex flex-col gap-6 overflow-y-auto pr-2 pb-10">
+  // -- Views --
+
+  const renderHealthView = () => (
+      <div className="flex flex-col gap-6">
             <h2 className="text-xl font-bold text-slate-100 flex items-center gap-2">
                 <BarChart3 className="text-indigo-400" />
                 Data Health & Statistics
@@ -132,10 +154,10 @@ const Analytics: React.FC<AnalyticsProps> = ({ dataset, onUpdateDataset }) => {
                     </div>
                 </div>
             )}
-
-            {/* Feature Importance / Columns */}
-            <div className="space-y-4">
-                <h3 className="text-lg font-semibold text-slate-300">Feature Importance & Distribution</h3>
+            
+            {/* Column List */}
+             <div className="space-y-4">
+                <h3 className="text-lg font-semibold text-slate-300">Detailed Column Stats</h3>
                 <div className="space-y-3">
                     {activeCols.map((col) => (
                         <div key={col.name} className="bg-slate-900/50 p-4 rounded-lg border border-slate-800 hover:border-slate-700 transition-colors">
@@ -155,7 +177,6 @@ const Analytics: React.FC<AnalyticsProps> = ({ dataset, onUpdateDataset }) => {
                                     </div>
                                 </div>
                                 <div className="flex items-center gap-4">
-                                     {/* Simple Importance Bar */}
                                      {col.type === 'number' && (
                                          <div className="flex items-center gap-2" title="Approx. Entropy/Variance">
                                             <TrendingUp size={14} className="text-slate-600" />
@@ -176,44 +197,123 @@ const Analytics: React.FC<AnalyticsProps> = ({ dataset, onUpdateDataset }) => {
                                     </button>
                                 </div>
                             </div>
-                            
-                            <div className="grid grid-cols-4 gap-4 text-xs mt-3 pt-3 border-t border-slate-800/50">
-                                <div className="text-slate-500">Unique: <span className="text-slate-300 ml-1">{col.uniqueCount}</span></div>
-                                <div className="text-slate-500">Missing: <span className="text-red-400 ml-1">{col.missingCount}</span></div>
-                                {col.type === 'number' && (
-                                    <>
-                                        <div className="text-slate-500">Min: <span className="text-slate-300 ml-1">{col.min?.toFixed(1)}</span></div>
-                                        <div className="text-slate-500">Max: <span className="text-slate-300 ml-1">{col.max?.toFixed(1)}</span></div>
-                                    </>
-                                )}
-                            </div>
                         </div>
                     ))}
                 </div>
             </div>
+      </div>
+  );
+
+  const renderFeaturesView = () => (
+      <div className="flex flex-col gap-8">
+           {/* Calculated Columns */}
+           <div>
+               <h2 className="text-xl font-bold text-slate-100 flex items-center gap-2 mb-4">
+                    <Calculator className="text-indigo-400" />
+                    Feature Engineering
+                </h2>
+                <div className="bg-slate-900 p-6 rounded-xl border border-slate-800">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                        <div className="col-span-1">
+                            <label className="text-xs text-slate-500 font-bold mb-1 block">New Column Name</label>
+                            <input 
+                                value={newColName} 
+                                onChange={e => setNewColName(e.target.value)}
+                                className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-sm"
+                                placeholder="e.g. TotalCost"
+                            />
+                        </div>
+                        <div className="col-span-2">
+                             <label className="text-xs text-slate-500 font-bold mb-1 block">Formula (JS Syntax)</label>
+                             <div className="flex gap-2">
+                                <input 
+                                    value={formula} 
+                                    onChange={e => setFormula(e.target.value)}
+                                    className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-sm font-mono text-indigo-300"
+                                    placeholder="e.g. Price * Quantity + log(Tax)"
+                                />
+                                <button 
+                                    onClick={handleCreateFeature}
+                                    className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 rounded text-sm font-medium whitespace-nowrap"
+                                >
+                                    Create Feature
+                                </button>
+                             </div>
+                        </div>
+                    </div>
+                    <div className="text-xs text-slate-500">
+                        Supported: Standard operators (+, -, *, /), Math functions (log, abs, pow, sqrt), and any numeric column names as variables.
+                        <br/>
+                        Example: <code className="text-slate-400">Math.log(Income) + Bonus</code>
+                    </div>
+                </div>
+           </div>
+
+           {/* Correlation Matrix */}
+           <div>
+                <h2 className="text-xl font-bold text-slate-100 flex items-center gap-2 mb-4">
+                    <Table2 className="text-indigo-400" />
+                    Correlation Matrix
+                </h2>
+                {correlation.cols.length > 1 ? (
+                    <div className="overflow-x-auto bg-slate-900 p-4 rounded-xl border border-slate-800">
+                        <table className="w-full text-xs">
+                            <thead>
+                                <tr>
+                                    <th className="w-20"></th>
+                                    {correlation.cols.map(c => (
+                                        <th key={c} className="p-2 text-center text-slate-400 font-normal w-20 truncate" title={c}>{c.substring(0,8)}...</th>
+                                    ))}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {correlation.matrix.map((row, i) => (
+                                    <tr key={i}>
+                                        <td className="p-2 font-medium text-slate-400 text-right truncate" title={correlation.cols[i]}>{correlation.cols[i].substring(0,8)}...</td>
+                                        {row.map((val, j) => {
+                                            const intensity = Math.abs(val);
+                                            const color = val > 0 ? `rgba(99, 102, 241, ${intensity})` : `rgba(239, 68, 68, ${intensity})`; // Indigo vs Red
+                                            return (
+                                                <td key={j} className="p-1 text-center border border-slate-800" style={{ backgroundColor: color }}>
+                                                    <span className="relative z-10 text-white drop-shadow-md">{val.toFixed(2)}</span>
+                                                </td>
+                                            );
+                                        })}
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                ) : (
+                    <div className="p-8 text-center text-slate-500 bg-slate-900 rounded-xl border border-slate-800">
+                        Need at least 2 numeric columns for correlation analysis.
+                    </div>
+                )}
+           </div>
+      </div>
+  );
+
+  return (
+    <div className="h-full flex flex-col gap-6">
+        {/* Navigation */}
+        <div className="flex gap-4 border-b border-slate-800 pb-2">
+            <button 
+                onClick={() => setActiveTab('health')}
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${activeTab === 'health' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}
+            >
+                Health & Overview
+            </button>
+            <button 
+                onClick={() => setActiveTab('features')}
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${activeTab === 'features' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}
+            >
+                Features & Correlations
+            </button>
         </div>
 
-        {/* Right Col: Configuration / Filters (Sticky) */}
-        <div className="hidden lg:flex flex-col gap-4 bg-slate-900 border border-slate-800 rounded-xl p-6 h-fit sticky top-0">
-             <h3 className="font-semibold text-slate-200">Analysis Configuration</h3>
-             <p className="text-sm text-slate-400">
-                Adjusting these settings will affect calculations and visualizations globally.
-             </p>
-             
-             <div className="space-y-2">
-                 <label className="text-xs font-semibold text-slate-500 uppercase">Imputation Strategy</label>
-                 <select className="w-full bg-slate-950 border border-slate-700 text-slate-300 text-sm rounded-md p-2">
-                     <option>Ignore Missing Rows</option>
-                     <option>Fill with Mean/Mode</option>
-                     <option>Fill with Zero/Unknown</option>
-                 </select>
-             </div>
-
-             <div className="p-4 bg-blue-500/10 rounded-lg border border-blue-500/20 text-xs text-blue-300">
-                 Tip: Use the "Data Inspection" tab to transpose rows/columns if the structure seems inverted.
-             </div>
+        <div className="flex-1 overflow-y-auto pr-2 pb-10">
+            {activeTab === 'health' ? renderHealthView() : renderFeaturesView()}
         </div>
-
     </div>
   );
 };

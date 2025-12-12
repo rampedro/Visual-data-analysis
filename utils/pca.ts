@@ -99,11 +99,19 @@ const jacobi = (matrix: number[][], maxIter = 100): { values: number[], vectors:
   return { values: eigenvalues, vectors: eigenvectors };
 };
 
+export interface PCAResult {
+    data: { x: number; y: number; id: string | number; [key: string]: any }[];
+    loadings: {
+        pc1: { name: string; value: number }[];
+        pc2: { name: string; value: number }[];
+    };
+}
+
 export const calculatePCA = (
   rows: DataRow[],
   columns: string[]
-): { x: number; y: number; id: string | number; [key: string]: any }[] => {
-  if (rows.length === 0 || columns.length < 2) return [];
+): PCAResult => {
+  if (rows.length === 0 || columns.length < 2) return { data: [], loadings: { pc1: [], pc2: [] } };
 
   // 1. Extract and Clean Data
   const rawData: number[][] = rows.map(row => {
@@ -134,7 +142,7 @@ export const calculatePCA = (
   const pc2 = vectors[top2Indices[1]];
 
   // If we couldn't find 2 components (e.g., 1 variable), handle gracefully
-  if (!pc1 || !pc2) return [];
+  if (!pc1 || !pc2) return { data: [], loadings: { pc1: [], pc2: [] } };
 
   const projected = centered.map((row, rowIndex) => {
     const x = row.reduce((sum, val, i) => sum + val * pc1[i], 0);
@@ -146,6 +154,18 @@ export const calculatePCA = (
       ...rows[rowIndex] // Pass through original data for tooltip
     };
   });
+  
+  // Format loadings for explainability
+  const formatLoadings = (vec: number[]) => {
+      return vec.map((val, i) => ({ name: columns[i], value: val }))
+                .sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
+  };
 
-  return projected;
+  return {
+      data: projected,
+      loadings: {
+          pc1: formatLoadings(pc1),
+          pc2: formatLoadings(pc2)
+      }
+  };
 };

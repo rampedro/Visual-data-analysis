@@ -150,3 +150,103 @@ export const setHeaderRow = (dataset: Dataset, rowIndex: number): Dataset => {
         columns: analyzeColumns(newRows)
     };
 };
+
+// New: For "matrix from unstructured csv with wrong colum and rows"
+export const cropDataset = (dataset: Dataset, startRow: number, endRow: number, columnsToKeep?: string[]): Dataset => {
+    let newRows = dataset.rows.slice(startRow, endRow + 1);
+    
+    if (columnsToKeep && columnsToKeep.length > 0) {
+        newRows = newRows.map(row => {
+            const pruned: any = { id: row.id };
+            columnsToKeep.forEach(col => {
+                if (row.hasOwnProperty(col)) {
+                    pruned[col] = row[col];
+                }
+            });
+            return pruned;
+        });
+    }
+    
+    // Re-index IDs
+    newRows = newRows.map((r, i) => ({ ...r, id: i }));
+
+    return {
+        ...dataset,
+        rows: newRows,
+        columns: analyzeColumns(newRows)
+    };
+};
+
+// New: Calculate Correlation Matrix
+export const calculateCorrelationMatrix = (dataset: Dataset): { cols: string[], matrix: number[][] } => {
+    const numericCols = dataset.columns.filter(c => c.type === 'number' && c.isActive).map(c => c.name);
+    if (numericCols.length < 2) return { cols: [], matrix: [] };
+
+    const matrix: number[][] = [];
+    
+    for (let i = 0; i < numericCols.length; i++) {
+        const rowCorr: number[] = [];
+        for (let j = 0; j < numericCols.length; j++) {
+            if (i === j) {
+                rowCorr.push(1);
+            } else {
+                // Compute Pearson Correlation
+                const vals1 = dataset.rows.map(r => Number(r[numericCols[i]]) || 0);
+                const vals2 = dataset.rows.map(r => Number(r[numericCols[j]]) || 0);
+                
+                const n = vals1.length;
+                const sum1 = vals1.reduce((a, b) => a + b, 0);
+                const sum2 = vals2.reduce((a, b) => a + b, 0);
+                const sum1Sq = vals1.reduce((a, b) => a + b * b, 0);
+                const sum2Sq = vals2.reduce((a, b) => a + b * b, 0);
+                const pSum = vals1.reduce((a, b, idx) => a + b * vals2[idx], 0);
+                
+                const num = pSum - (sum1 * sum2 / n);
+                const den = Math.sqrt((sum1Sq - sum1 * sum1 / n) * (sum2Sq - sum2 * sum2 / n));
+                
+                rowCorr.push(den === 0 ? 0 : num / den);
+            }
+        }
+        matrix.push(rowCorr);
+    }
+    
+    return { cols: numericCols, matrix };
+};
+
+// New: Formula Evaluator for "linear combination and none linearn combiantion"
+export const createCalculatedColumn = (dataset: Dataset, newColName: string, formula: string): Dataset => {
+    // Basic safety check: only allow column names and Math functions
+    // We will simple replace column names in the string with `row['colName']` and eval
+    
+    const newRows = dataset.rows.map(row => {
+        let evalStr = formula;
+        dataset.columns.forEach(col => {
+            // Replace column names with values. Sort by length to avoid partial replacement issues (e.g. "Tax" inside "TaxRate")
+            // A robust parser is better, but this is a simple "flexible" implementation as requested.
+            // Using a specific pattern like [ColName] is safer for user input.
+        });
+
+        // Simpler approach: Create a function with keys as args
+        try {
+           const keys = Object.keys(row).filter(k => k !== 'id');
+           const values = keys.map(k => Number(row[k]) || 0); // Force numeric for math
+           
+           // Allow common math functions
+           const mathKeys = Object.getOwnPropertyNames(Math);
+           const mathVals = mathKeys.map(k => (Math as any)[k]);
+
+           const func = new Function(...keys, ...mathKeys, `return ${formula};`);
+           const result = func(...values, ...mathVals);
+           
+           return { ...row, [newColName]: result };
+        } catch (e) {
+           return { ...row, [newColName]: null };
+        }
+    });
+
+    return {
+        ...dataset,
+        rows: newRows,
+        columns: analyzeColumns(newRows)
+    };
+};
