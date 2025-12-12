@@ -1,5 +1,5 @@
 <div align="center">
-<img width="1200" height="600" alt="data-explaning-screenshot" src="screenshot.png" />
+<img width="1200" height="800" alt="data-explaning-screenshot" src="screenshot.png" />
 </div>
 
 # Run and deploy your AI Studio app
